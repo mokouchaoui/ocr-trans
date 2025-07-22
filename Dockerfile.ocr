@@ -1,0 +1,65 @@
+# Dockerfile for building OCR C library
+FROM ubuntu:22.04
+
+# Set environment variables
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Europe/Paris
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    # Build tools
+    build-essential \
+    cmake \
+    pkg-config \
+    git \
+    wget \
+    # Tesseract and Leptonica
+    tesseract-ocr \
+    tesseract-ocr-dev \
+    libtesseract-dev \
+    libleptonica-dev \
+    # Language packs
+    tesseract-ocr-fra \
+    tesseract-ocr-eng \
+    tesseract-ocr-ara \
+    tesseract-ocr-deu \
+    tesseract-ocr-spa \
+    # Image processing libraries
+    libpng-dev \
+    libjpeg-dev \
+    libtiff-dev \
+    libwebp-dev \
+    libopenjp2-7-dev \
+    # Additional utilities
+    imagemagick \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /workspace
+
+# Copy source files
+COPY ocr.c .
+COPY Makefile .
+
+# Build the OCR library
+RUN make clean && make all
+
+# Install Python for testing
+RUN apt-get update && apt-get install -y python3 python3-pip && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies for integration
+RUN pip3 install --no-cache-dir pillow numpy
+
+# Copy Python wrapper
+COPY custom_ocr.py .
+
+# Create a test image
+RUN convert -size 800x200 xc:white -font DejaVu-Sans -pointsize 24 -fill black \
+    -gravity center -annotate +0+0 "FACTURE N° FA009421\nDate: 15/06/2024\nMontant TTC: 180.894,20 EUR" \
+    test_image.png
+
+# Test the OCR
+RUN ./ocr_cli test_image.png fra+eng
+
+# Set default command
+CMD ["bash"]

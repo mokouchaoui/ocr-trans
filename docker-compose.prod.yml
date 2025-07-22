@@ -1,0 +1,140 @@
+version: '3.8'
+
+services:
+  # OCR Application - Production
+  ocr-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: ocr-app-prod
+    ports:
+      - "8000:8000"
+    environment:
+      - MYSQL_HOST=mysql-db
+      - MYSQL_PORT=3306
+      - MYSQL_USER=ocr_user
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-ocr_secure_password}
+      - MYSQL_DATABASE=ocr_database
+      - ENVIRONMENT=production
+      - LLAMA_API_URL=http://38.46.220.18:5000/api/ask
+      - TESSERACT_CMD=/usr/bin/tesseract
+    volumes:
+      - ./uploads:/app/uploads
+      - ./logs:/app/logs
+    depends_on:
+      mysql-db:
+        condition: service_healthy
+    networks:
+      - ocr-network
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '1'
+          memory: 1G
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/test/"]
+      interval: 60s
+      timeout: 30s
+      retries: 3
+      start_period: 60s
+
+  # MySQL Database - Production
+  mysql-db:
+    image: mysql:8.0
+    container_name: ocr-mysql-prod
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-secure_root_password}
+      MYSQL_DATABASE: ocr_database
+      MYSQL_USER: ocr_user
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-ocr_secure_password}
+    volumes:
+      - mysql_data_prod:/var/lib/mysql
+      - ./mysql-config:/etc/mysql/conf.d:ro
+      - ./backup:/backup
+    networks:
+      - ocr-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD:-secure_root_password}"]
+      interval: 60s
+      timeout: 30s
+      retries: 5
+      start_period: 60s
+    command: --default-authentication-plugin=mysql_native_password --innodb-buffer-pool-size=512M
+
+  # Redis for caching - Production
+  redis:
+    image: redis:7-alpine
+    container_name: ocr-redis-prod
+    volumes:
+      - redis_data_prod:/data
+      - ./redis.conf:/usr/local/etc/redis/redis.conf:ro
+    networks:
+      - ocr-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    command: redis-server /usr/local/etc/redis/redis.conf
+
+  # Nginx Load Balancer - Production
+  nginx:
+    image: nginx:alpine
+    container_name: ocr-nginx-prod
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx-prod.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    depends_on:
+      - ocr-app
+    networks:
+      - ocr-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+networks:
+  ocr-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+volumes:
+  mysql_data_prod:
+    driver: local
+  redis_data_prod:
+    driver: local
